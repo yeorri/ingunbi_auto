@@ -1,5 +1,5 @@
 {
-  "version": "1.1.0",
+  "version": "1.1.1",
   "download_url": "https://github.com/yeorri/ingunbi_auto/releases/latest",
-  "notes": "배포 용량 대폭 축소(240MB→수십MB) — Chromium을 동봉하지 않고 첫 실행 때 1회 자동 다운로드(약 150MB, 인터넷 필요). 이후 업데이트가 훨씬 가벼워집니다."
+  "notes": "파일 비밀번호 입력칸을 가림 없이 표시"
 }

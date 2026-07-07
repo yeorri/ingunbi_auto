@@ -457,7 +457,7 @@ class App:
         _pair_label(4, "납부기한 (선택)", "납부서 파일명용")
         _pair_entry(5, self.var_napbu_due)
         _pair_label(6, "파일 비밀번호", "세무사랑 공용")
-        _pair_entry(7, self.var_filepw, secret=True)
+        _pair_entry(7, self.var_filepw)   # 마스킹 없이 표시 (사용자 요청)
 
         # 저장된 설정 복원 — 납부기한(입력 형식 그대로)·파일 비밀번호는 실행 간 기억
         s = load_settings()
