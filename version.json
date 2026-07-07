@@ -1,5 +1,5 @@
 {
-  "version": "1.0.1",
+  "version": "1.1.0",
   "download_url": "https://github.com/yeorri/ingunbi_auto/releases/latest",
-  "notes": "파일 비밀번호·납부기한 자동 기억(실행 간 유지), 납부기한 입력 형식 그대로 파일명에 사용, 위택스 납부서 대기 기본 0분"
+  "notes": "배포 용량 대폭 축소(240MB→수십MB) — Chromium을 동봉하지 않고 첫 실행 때 1회 자동 다운로드(약 150MB, 인터넷 필요). 이후 업데이트가 훨씬 가벼워집니다."
 }
