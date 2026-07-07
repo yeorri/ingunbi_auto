@@ -18,6 +18,8 @@ if getattr(sys, "frozen", False):
                           os.path.join(_base, "playwright-browsers"))
 
 import asyncio
+import base64
+import json
 import queue
 import threading
 import tkinter as tk
@@ -26,7 +28,26 @@ from tkinter import filedialog, messagebox, ttk
 
 import updater
 from automation import ALL_PHASES, BrowserSession, Inputs, run_phases
+from automation.browser import app_data_dir
 from automation.hometax import JIGUP_TYPES
+
+# 사용자 설정(파일 비밀번호 등) — 개발: 프로젝트 폴더 / 배포: %LOCALAPPDATA%\IngunbiAuto
+SETTINGS_PATH = app_data_dir() / "settings.json"
+
+
+def load_settings() -> dict:
+    try:
+        return json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def save_settings(d: dict) -> None:
+    try:
+        SETTINGS_PATH.write_text(json.dumps(d, ensure_ascii=False, indent=1),
+                                 encoding="utf-8")
+    except Exception:
+        pass
 
 # ─────────────────────────── 디자인 토큰 ───────────────────────────
 FONT = "Malgun Gothic"        # 한글 선명
@@ -407,6 +428,15 @@ class App:
         _pair_entry(5, self.var_napbu_due)
         _pair_label(6, "파일 비밀번호", "세무사랑 공용")
         _pair_entry(7, self.var_filepw, secret=True)
+
+        # 저장된 설정 복원 — 납부기한(입력 형식 그대로)·파일 비밀번호는 실행 간 기억
+        s = load_settings()
+        try:
+            self.var_filepw.set(
+                base64.b64decode(s.get("file_password_b64", "")).decode("utf-8"))
+        except Exception:
+            pass
+        self.var_napbu_due.set(s.get("napbu_due", ""))
         self._field(form, "홈택스 원천세 변환파일", self.var_ht_file, pick="file")
         self._field(form, "위택스 특별징수 파일", self.var_wt_file, pick="file")
         self._field(form, "PDF 저장 폴더", self.var_outdir, pick="dir")
@@ -515,7 +545,7 @@ class App:
         self.var_mode = tk.StringVar(value="pdf")
         self.var_incname = tk.BooleanVar(value=True)
         self.var_disclose = tk.BooleanVar(value=True)
-        self.var_napbu_wait = tk.StringVar(value="1")
+        self.var_napbu_wait = tk.StringVar(value="0")
 
         seg = tk.Frame(opt, bg=CARD)
         seg.pack(fill="x", pady=(0, 4))
@@ -713,6 +743,13 @@ class App:
             except Exception as e:  # noqa: BLE001
                 emit("log", text=f"[!] 예외: {e}")
                 emit("done")
+
+        # 다음 실행을 위해 기억: 파일 비밀번호(살짝 가림) + 납부기한(입력 형식 그대로)
+        save_settings({
+            "file_password_b64": base64.b64encode(
+                self.var_filepw.get().encode("utf-8")).decode("ascii"),
+            "napbu_due": self.var_napbu_due.get().strip(),
+        })
 
         self._ensure_session()
         self._busy = True

@@ -31,3 +31,6 @@ smoke_*.png
 
 # 諛고룷 zip
 *.zip
+
+# 사용자 설정(비밀번호 포함) ? 커밋 금지
+settings.json

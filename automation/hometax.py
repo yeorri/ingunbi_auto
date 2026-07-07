@@ -1185,16 +1185,6 @@ async def _click_text_in_frames(window, text: str) -> bool:
     return False
 
 
-def _norm_due_input(s: str) -> str:
-    """사용자 입력 납부기한 정규화 → 'YYYY-MM-DD'. (2026-07-10 / 26.07.10 / 20260710 허용)"""
-    d = "".join(c for c in (s or "") if c.isdigit())
-    if len(d) == 8:
-        return f"{d[:4]}-{d[4:6]}-{d[6:]}"
-    if len(d) == 6:
-        return f"20{d[:2]}-{d[2:4]}-{d[4:]}"
-    return ""
-
-
 async def print_napbu(ctx, page, pdf_dir, label: str = "", output_mode: str = "pdf",
                       include_name: bool = False, log=print, due_override: str = "") -> dict:
     """신고내역 모달의 납부서 [보기] → '납부서 목록' 모달 → 행별 [출력] → PDF저장/출력.
@@ -1299,11 +1289,11 @@ async def print_napbu(ctx, page, pdf_dir, label: str = "", output_mode: str = "p
                 continue
             await win.wait_for_timeout(1500)
             sc = await _clipreport_scope(win)
-            # 납부기한: ①사용자 입력 ②납부서 화면 텍스트 추출 ③과세기간 다음달 10일 계산
-            # (기한후신고 등은 규칙과 달라 사용자 입력이 최우선 — 원천세 목록엔 기한 컬럼 없음)
-            due_raw = _norm_due_input(due_override)
-            if due_raw:
-                log(f"  [i] 납부기한(입력값): {due_raw}")
+            # 납부기한: ①사용자 입력(형식 그대로 파일명에 사용 — 표기 취향 존중)
+            #           ②납부서 화면 텍스트 추출 ③과세기간 다음달 10일 계산 (②③은 YY.MM.DD)
+            due = (due_override or "").strip()
+            if due:
+                log(f"  [i] 납부기한(입력값 그대로): {due}")
             else:
                 due_raw = await _win_due_date(win)
                 if due_raw:
@@ -1312,7 +1302,7 @@ async def print_napbu(ctx, page, pdf_dir, label: str = "", output_mode: str = "p
                     due_raw = _due_from_period(b.get("period", ""))
                     if due_raw:
                         log(f"  [i] 납부기한(규칙 계산: 과세기간 다음달 10일): {due_raw}")
-            due = pdf_save.fmt_due(due_raw)
+                due = pdf_save.fmt_due(due_raw)
             # 파일명: [납부서]{이름}_원천세_{납부기한}.pdf
             # (소득구분은 납부서가 여러 종일 때만 붙임 — 파일명 충돌 방지)
             extras = ["원천세", due] + ([tag] if len(btns) > 1 else [])

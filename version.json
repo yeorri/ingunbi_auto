@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "download_url": "https://github.com/yeorri/ingunbi_auto/releases/latest",
-  "notes": "최초 릴리스 — 신고 3종(위택스 특별징수·홈택스 원천세·간이지급명세서) + 접수증·신고서·납부서 출력, 브라우저 세션 유지, 업데이트 알림"
+  "notes": "파일 비밀번호·납부기한 자동 기억(실행 간 유지), 납부기한 입력 형식 그대로 파일명에 사용, 위택스 납부서 대기 기본 0분"
 }
