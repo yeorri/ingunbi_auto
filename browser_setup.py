@@ -7,8 +7,11 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")  # 드라이버 출력의 터미널 색상 코드 제거용
 
 
 def _browsers_dir() -> Path:
@@ -36,9 +39,10 @@ def install_browsers(log=print) -> bool:
     try:
         from playwright._impl._driver import compute_driver_executable, get_driver_env
         exe = compute_driver_executable()
-        # 버전에 따라 (node, cli.js) 튜플 또는 단일 경로
+        # 버전에 따라 (node, cli.js) 튜플 또는 단일 경로.
+        # --no-shell: 우리가 안 쓰는 Headless Shell(~90MB)은 받지 않음 — 첫 실행 단축.
         cmd = ([*map(str, exe)] if isinstance(exe, (tuple, list)) else [str(exe)]) \
-            + ["install", "chromium"]
+            + ["install", "chromium", "--no-shell"]
         creation = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         proc = subprocess.Popen(
             cmd, env=get_driver_env(),
@@ -48,7 +52,7 @@ def install_browsers(log=print) -> bool:
         )
         assert proc.stdout is not None
         for line in proc.stdout:
-            line = line.strip()
+            line = _ANSI.sub("", line).strip()
             if line:
                 log(f"    다운로드: {line[:90]}")
         code = proc.wait()

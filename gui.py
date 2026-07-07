@@ -260,13 +260,15 @@ class App:
         def worker():
             ok = browser_setup.install_browsers(
                 lambda m: self.events.put({"kind": "log", "text": m}))
+            # 완료 메시지도 같은 큐로 — 다운로드 로그와 순서가 어긋나지 않게(FIFO)
+            if ok:
+                self.events.put({"kind": "log",
+                                 "text": "[v] 브라우저 준비 완료 — 이제 시작할 수 있습니다."})
 
             def fin():
                 self._browsers_ready = ok
                 self._refresh_validation()
-                if ok:
-                    self._append_log("[v] 브라우저 준비 완료 — 이제 시작할 수 있습니다.")
-                else:
+                if not ok:
                     messagebox.showerror(
                         "설치 실패",
                         "브라우저 구성요소 다운로드에 실패했습니다.\n"
