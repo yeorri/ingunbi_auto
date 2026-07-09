@@ -19,6 +19,14 @@ if getattr(sys, "frozen", False):
     _bundled = os.path.join(_base, "playwright-browsers")
     if os.path.isdir(_bundled):
         os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", _bundled)
+    else:
+        # ⚠ playwright-python은 frozen(exe)이면 드라이버에 PLAYWRIGHT_BROWSERS_PATH='0'
+        # (= exe 내부 .local-browsers)을 강제 주입한다(_transport.py) → 분리 배포에선
+        # 공용 위치(ms-playwright)를 명시해 선점해야 브라우저를 찾는다(v1.1.0 버그 수정).
+        os.environ.setdefault(
+            "PLAYWRIGHT_BROWSERS_PATH",
+            os.path.join(os.environ.get("LOCALAPPDATA")
+                         or os.path.expanduser("~\\AppData\\Local"), "ms-playwright"))
 
 import asyncio
 import base64
