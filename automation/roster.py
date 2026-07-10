@@ -170,6 +170,30 @@ def record_ht_rows(rows: list[dict], ym: str | None = None) -> int:
     return n
 
 
+def add_manual(clients_sel: list[dict], *, ht: bool, wt: bool,
+               filed_at: str, ym: str | None = None) -> int:
+    """수기(프로그램 밖) 신고분을 대장에 '미출력' 상태로 등록 — 납부서 출력 대기열에 추가.
+
+    이미 대장에 있는 업체는 신고 표시만 보강한다(출력 기록은 건드리지 않음).
+    """
+    entries = load_ledger(ym)
+    n = 0
+    for c in clients_sel:
+        bizno = _norm_bizno(c.get("bizno", ""))
+        key = bizno or f"wt:{c.get('ceo') or c.get('name', '')}"
+        e = entries.get(key) or _blank_entry(c.get("name", ""), bizno, c.get("ceo", ""))
+        if ht and not e["ht"].get("filed_at"):
+            e["ht"].update({"filed_at": filed_at + " (수기)", "napbu": e["ht"].get("napbu", "")})
+        if wt and not e["wt"].get("filed_at"):
+            e["wt"].update({"filed_at": filed_at, "napbu": e["wt"].get("napbu", ""),
+                            "wt_name": c.get("ceo") or c.get("name", ""),
+                            "amount": "?"})   # 수기분은 세액 미상 → 0원 스킵 안 함
+        entries[key] = e
+        n += 1
+    save_ledger(entries, ym)
+    return n
+
+
 def record_wt_rows(rows: list[dict], filed_at: str, ym: str | None = None) -> int:
     """위택스 '정상 신고 내역' 수집 결과를 대장에 기입. rows: {name,taxym,amount}."""
     entries = load_ledger(ym)

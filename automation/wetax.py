@@ -332,30 +332,39 @@ async def search_by_name(page, name: str, log=print) -> int:
 
 
 async def _open_popover_for_row(page, name: str, filed_date: str, log=print) -> bool:
-    """납세자명 + 신고일자가 모두 일치하는 행의 발급출력 아이콘 클릭 → 팝오버."""
+    """납세자명(+신고일자) 행의 발급출력 아이콘 클릭 → 팝오버.
+
+    신고일자까지 일치하는 행 우선, 없으면(수기 등록 등으로 날짜가 다르면)
+    이름이 일치하는 행 중 가장 최근 신고일자 행으로 폴백.
+    """
     ok = False
     for frame in page.frames:
         try:
             ok = bool(await frame.evaluate("""(arg) => {
                 const vis = e => { const r = e.getBoundingClientRect();
                     return r.width > 1 && r.height > 1; };
+                const cand = [];
                 for (const row of document.querySelectorAll('tr')) {
                     const t = (row.innerText || '');
                     if (!t.includes(arg.name)) continue;
-                    if (arg.date && !t.includes(arg.date)) continue;
                     const els = [...row.querySelectorAll('a, button')].filter(vis);
                     if (!els.length) continue;
-                    els[els.length - 1].click();
-                    return true;
+                    const dm = t.match(/20\\d\\d-\\d\\d-\\d\\d/);
+                    cand.push({ el: els[els.length - 1], date: dm ? dm[0] : '' });
                 }
-                return false;
+                if (!cand.length) return false;
+                let pick = arg.date ? cand.find(c => c.date === arg.date) : null;
+                if (!pick)   // 날짜 불일치 → 가장 최근 신고일자 행으로 폴백
+                    pick = cand.sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+                pick.el.click();
+                return true;
             }""", {"name": name, "date": filed_date}))
             if ok:
                 break
         except Exception:
             continue
     if not ok:
-        log(f"[!] (위택스) '{name}'({filed_date}) 행을 못 찾음")
+        log(f"[!] (위택스) '{name}' 행을 못 찾음")
     else:
         await page.wait_for_timeout(1000)
     return ok

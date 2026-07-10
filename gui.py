@@ -375,12 +375,41 @@ class App:
             roster.save_clients(rows)
             refresh_clients()
 
+        # 수기 신고분 등록 — 명부에서 선택한 업체를 납부서 출력 대기열(대장)에 추가
+        v_add_ht = tk.BooleanVar(value=True)
+        v_add_wt = tk.BooleanVar(value=True)
+
+        def add_to_ledger():
+            sel = tv.selection()
+            if not sel:
+                messagebox.showinfo("추가", "명부에서 업체를 먼저 선택하세요.", parent=win)
+                return
+            if not (v_add_ht.get() or v_add_wt.get()):
+                messagebox.showinfo("추가", "홈택스/위택스 중 하나 이상 체크하세요.", parent=win)
+                return
+            picked_biz = {"".join(c for c in str(tv.item(i)["values"][1]) if c.isdigit())
+                          for i in sel}
+            clients_sel = [c for c in roster.load_clients() if c["bizno"] in picked_biz]
+            from datetime import date as _d
+            n = roster.add_manual(clients_sel, ht=v_add_ht.get(), wt=v_add_wt.get(),
+                                  filed_at=_d.today().strftime("%Y-%m-%d"))
+            refresh_ledger()
+            messagebox.showinfo("추가 완료",
+                                f"{n}개 업체를 출력 대기로 등록했습니다.\n"
+                                "납부서 단계(⑥⑦)를 실행하면 처리됩니다.", parent=win)
+
         RButton(bar, "엑셀/CSV 가져오기", do_import, kind="mini", bg=BG,
                 width=130, height=30, font=(FONT, 9, "bold")).pack(side="left")
         RButton(bar, "선택 삭제", do_delete, kind="mini", bg=BG,
                 width=80, height=30, font=(FONT, 9, "bold")).pack(side="left", padx=6)
-        tk.Label(bar, text="열 제목(업체명·사업자등록번호·대표자명)으로 자동 인식 — 아이디/비번 등 다른 열은 무시",
-                 bg=BG, fg=MUTE, font=(FONT, 8)).pack(side="left", padx=8)
+        RButton(bar, "선택 업체를 출력 대기로 추가 →", add_to_ledger, kind="mini", bg=BG,
+                width=190, height=30, font=(FONT, 9, "bold")).pack(side="left", padx=(12, 4))
+        tk.Checkbutton(bar, text="홈택스", variable=v_add_ht, bg=BG,
+                       font=(FONT, 9)).pack(side="left")
+        tk.Checkbutton(bar, text="위택스", variable=v_add_wt, bg=BG,
+                       font=(FONT, 9)).pack(side="left")
+        tk.Label(bar, text="(수기 신고분용)", bg=BG, fg=MUTE,
+                 font=(FONT, 8)).pack(side="left", padx=4)
         tv.pack(fill="x", padx=14, pady=(4, 12))
 
         # ── 이번 달 작업 대장 ──
@@ -395,7 +424,7 @@ class App:
                         ("htn", "홈택스 납부서", 110), ("wtn", "위택스 납부서", 110)):
             lv.heading(c, text=t)
             lv.column(c, width=w, anchor="w")
-        MARK = {"done": "✓ 출력됨", "none": "— 없음", "": "미출력"}
+        MARK = {"done": "✓ 출력됨", "none": "— 없음", "skip": "건너뜀", "": "미출력"}
 
         def refresh_ledger():
             lv.delete(*lv.get_children())
@@ -423,10 +452,27 @@ class App:
             roster.save_ledger(entries)
             refresh_ledger()
 
+        def skip_rows():
+            sel = lv.selection()
+            if not sel:
+                messagebox.showinfo("건너뛰기", "건너뛸 행을 먼저 선택하세요.", parent=win)
+                return
+            entries = roster.load_ledger()
+            for key in sel:
+                if key in entries:
+                    for side in ("ht", "wt"):
+                        s = entries[key].setdefault(side, {})
+                        if s.get("filed_at") and not s.get("napbu"):
+                            s["napbu"] = "skip"
+            roster.save_ledger(entries)
+            refresh_ledger()
+
         RButton(bar2, "새로고침", refresh_ledger, kind="mini", bg=BG,
                 width=80, height=30, font=(FONT, 9, "bold")).pack(side="left")
         RButton(bar2, "선택행 출력기록 지우기(재출력)", clear_print_marks, kind="mini", bg=BG,
                 width=200, height=30, font=(FONT, 9, "bold")).pack(side="left", padx=6)
+        RButton(bar2, "선택행 건너뛰기", skip_rows, kind="mini", bg=BG,
+                width=120, height=30, font=(FONT, 9, "bold")).pack(side="left")
         tk.Label(bar2, text="신고하면 자동 기입되고, 납부서 출력 단계는 '미출력' 행만 처리합니다",
                  bg=BG, fg=MUTE, font=(FONT, 8)).pack(side="left", padx=8)
         lv.pack(fill="both", expand=True, padx=14, pady=(4, 14))
