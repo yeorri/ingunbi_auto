@@ -40,6 +40,7 @@ from tkinter import filedialog, messagebox, ttk
 import browser_setup
 import updater
 from automation import ALL_PHASES, BrowserSession, Inputs, run_phases
+from automation import roster
 from automation.browser import app_data_dir
 from automation.hometax import JIGUP_TYPES
 
@@ -307,6 +308,132 @@ class App:
         threading.Thread(target=self.session_loop.run_forever, daemon=True).start()
         self.session = BrowserSession()
 
+    # ── 거래처 명부 · 작업 대장 창 ──
+    @staticmethod
+    def _fmt_bizno(b: str) -> str:
+        d = "".join(c for c in str(b) if c.isdigit())
+        return f"{d[:3]}-{d[3:5]}-{d[5:]}" if len(d) == 10 else str(b)
+
+    def _open_roster(self):
+        if getattr(self, "_roster_win", None) is not None:
+            try:
+                if self._roster_win.winfo_exists():
+                    self._roster_win.lift()
+                    return
+            except Exception:
+                pass
+        win = tk.Toplevel(self.root)
+        self._roster_win = win
+        win.title("거래처 명부 · 작업 대장")
+        win.geometry("1000x680")
+        win.configure(bg=BG)
+
+        # ── 명부 (담당 거래처 — 엑셀/CSV 가져오기) ──
+        tk.Label(win, text="거래처 명부", bg=BG, fg=INK,
+                 font=(FONT, 11, "bold")).pack(anchor="w", padx=14, pady=(12, 2))
+        bar = tk.Frame(win, bg=BG)
+        bar.pack(fill="x", padx=14)
+        tv = ttk.Treeview(win, columns=("name", "bizno", "ceo"), show="headings", height=8)
+        for c, t, w in (("name", "업체명", 340), ("bizno", "사업자등록번호", 150),
+                        ("ceo", "대표자명", 130)):
+            tv.heading(c, text=t)
+            tv.column(c, width=w, anchor="w")
+
+        def refresh_clients():
+            tv.delete(*tv.get_children())
+            for r in roster.load_clients():
+                tv.insert("", "end", values=(r["name"], self._fmt_bizno(r["bizno"]),
+                                             r.get("ceo", "")))
+
+        def do_import():
+            p = filedialog.askopenfilename(
+                title="명부 파일 선택 (엑셀/CSV)", parent=win,
+                filetypes=[("Excel/CSV", "*.xlsx *.csv"), ("모든 파일", "*.*")])
+            if not p:
+                return
+            try:
+                rows = roster.import_table(p)
+            except Exception as e:  # noqa: BLE001
+                messagebox.showerror("가져오기 실패", str(e)[:200], parent=win)
+                return
+            if not rows:
+                messagebox.showwarning(
+                    "가져오기", "인식된 행이 없습니다.\n"
+                    "열 제목에 '업체명'과 '사업자등록번호'가 있는지 확인해주세요.", parent=win)
+                return
+            roster.save_clients(rows)
+            refresh_clients()
+            messagebox.showinfo("가져오기 완료", f"{len(rows)}개 업체를 등록했습니다.", parent=win)
+
+        def do_delete():
+            sel = tv.selection()
+            if not sel:
+                return
+            drop = {"".join(c for c in str(tv.item(i)["values"][1]) if c.isdigit())
+                    for i in sel}
+            rows = [r for r in roster.load_clients() if r["bizno"] not in drop]
+            roster.save_clients(rows)
+            refresh_clients()
+
+        RButton(bar, "엑셀/CSV 가져오기", do_import, kind="mini", bg=BG,
+                width=130, height=30, font=(FONT, 9, "bold")).pack(side="left")
+        RButton(bar, "선택 삭제", do_delete, kind="mini", bg=BG,
+                width=80, height=30, font=(FONT, 9, "bold")).pack(side="left", padx=6)
+        tk.Label(bar, text="열 제목(업체명·사업자등록번호·대표자명)으로 자동 인식 — 아이디/비번 등 다른 열은 무시",
+                 bg=BG, fg=MUTE, font=(FONT, 8)).pack(side="left", padx=8)
+        tv.pack(fill="x", padx=14, pady=(4, 12))
+
+        # ── 이번 달 작업 대장 ──
+        tk.Label(win, text=f"작업 대장 ({roster.current_ym()})", bg=BG, fg=INK,
+                 font=(FONT, 11, "bold")).pack(anchor="w", padx=14, pady=(2, 2))
+        bar2 = tk.Frame(win, bg=BG)
+        bar2.pack(fill="x", padx=14)
+        lv = ttk.Treeview(win, columns=("name", "bizno", "ht", "wt", "htn", "wtn"),
+                          show="headings", height=14)
+        for c, t, w in (("name", "업체명", 260), ("bizno", "사업자번호", 130),
+                        ("ht", "원천세 신고", 130), ("wt", "지방세 신고", 110),
+                        ("htn", "홈택스 납부서", 110), ("wtn", "위택스 납부서", 110)):
+            lv.heading(c, text=t)
+            lv.column(c, width=w, anchor="w")
+        MARK = {"done": "✓ 출력됨", "none": "— 없음", "": "미출력"}
+
+        def refresh_ledger():
+            lv.delete(*lv.get_children())
+            entries = roster.load_ledger()
+            for key, e in sorted(entries.items(), key=lambda kv: kv[1].get("name", "")):
+                ht, wt = e.get("ht", {}), e.get("wt", {})
+                lv.insert("", "end", iid=key, values=(
+                    e.get("name", ""), self._fmt_bizno(e.get("bizno", "")),
+                    ("✓ " + str(ht.get("filed_at", ""))[:16]) if ht.get("filed_at") else "-",
+                    ("✓ " + str(wt.get("filed_at", ""))[:10]) if wt.get("filed_at") else "-",
+                    (MARK.get(ht.get("napbu", ""), "미출력") if ht.get("filed_at") else "-"),
+                    (MARK.get(wt.get("napbu", ""), "미출력") if wt.get("filed_at") else "-"),
+                ))
+
+        def clear_print_marks():
+            sel = lv.selection()
+            if not sel:
+                messagebox.showinfo("재출력", "재출력할 행을 먼저 선택하세요.", parent=win)
+                return
+            entries = roster.load_ledger()
+            for key in sel:
+                if key in entries:
+                    entries[key].setdefault("ht", {})["napbu"] = ""
+                    entries[key].setdefault("wt", {})["napbu"] = ""
+            roster.save_ledger(entries)
+            refresh_ledger()
+
+        RButton(bar2, "새로고침", refresh_ledger, kind="mini", bg=BG,
+                width=80, height=30, font=(FONT, 9, "bold")).pack(side="left")
+        RButton(bar2, "선택행 출력기록 지우기(재출력)", clear_print_marks, kind="mini", bg=BG,
+                width=200, height=30, font=(FONT, 9, "bold")).pack(side="left", padx=6)
+        tk.Label(bar2, text="신고하면 자동 기입되고, 납부서 출력 단계는 '미출력' 행만 처리합니다",
+                 bg=BG, fg=MUTE, font=(FONT, 8)).pack(side="left", padx=8)
+        lv.pack(fill="both", expand=True, padx=14, pady=(4, 14))
+
+        refresh_clients()
+        refresh_ledger()
+
     def _on_close(self):
         """창 닫기 — 세션 브라우저 정리 후 종료."""
         try:
@@ -336,6 +463,7 @@ class App:
         self.start_btn = RButton(footer, "▶  시작", self._start, kind="primary", bg=BG, width=130)
         self.start_btn.pack(side="left")
         RButton(footer, "■  중단", self._stop_clicked, kind="ghost", bg=BG, width=110).pack(side="left", padx=8)
+        RButton(footer, "명부·대장", self._open_roster, kind="ghost", bg=BG, width=110).pack(side="left")
         self.status_var = tk.StringVar(value="대기 중")
         tk.Label(footer, textvariable=self.status_var, bg=BG, fg=MUTE,
                  font=(FONT, 9)).pack(side="right", pady=4)
@@ -690,10 +818,7 @@ class App:
                 miss.append("간이지급명세서 행 완성(종류·파일 짝 맞추기)")
         if sel & {"wetax_filing", "hometax_filing", "jigup_filing"}:
             need(self.var_filepw, "파일 비밀번호")
-        if hometax_out or wetax_out:
-            digits = "".join(c for c in self.var_bizno.get() if c.isdigit())
-            if len(digits) != 10:
-                miss.append("사업자등록번호(10자리)")
+        # 사업자등록번호는 일괄 모드(작업 대장)에선 불필요 — 단일 폴백 시에만 쓰여 필수 아님
         if (sel & {"hometax_docs", "wetax_docs", "hometax_napbu", "wetax_napbu"}) \
                 and self.var_mode.get() == "pdf":
             need(self.var_outdir, "PDF 저장 폴더")

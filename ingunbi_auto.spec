@@ -14,7 +14,7 @@ pw_datas, pw_binaries, pw_hidden = collect_all("playwright")
 hiddenimports = pw_hidden + [
     "pywinauto", "pywinauto.findwindows", "comtypes",
     "win32api", "win32con", "win32gui", "win32process", "win32print", "pywintypes",
-    "pypdf",
+    "pypdf", "openpyxl",
 ]
 
 a = Analysis(
@@ -25,7 +25,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["pytesseract", "PIL", "numpy", "cv2", "openpyxl", "matplotlib", "pandas", "scipy"],
+    excludes=["pytesseract", "PIL", "numpy", "cv2", "matplotlib", "pandas", "scipy"],
     noarchive=False,
 )
 

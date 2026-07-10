@@ -7,10 +7,12 @@ LIVE-TODO: 원천세 메뉴 경로 확정 (automation/hometax.py 참조).
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from .. import browser as B
 from .. import hometax as H
+from .. import roster
 from .base import Inputs, PhaseResult
 
 KEY = "hometax_filing"
@@ -59,7 +61,21 @@ async def run(ctx, inp: Inputs, emit, stop_check=None) -> PhaseResult:
         return res
 
     # 4) 제출하러 가기 → 전자파일 제출하기 → 제출확인 → 접수증 (실제·비가역)
+    run_start = datetime.now()
     ok = await H.submit_filing(page, log)
     res.ok = ok
     res.reason = "제출 완료" if ok else "제출 실패"
+
+    if ok:
+        # 방금 신고분(상호·사업자번호·접수번호)을 신고내역 조회에서 수집 → 작업 대장 기록.
+        # 접수일시가 제출 시각 이후인 행만 취해 같은 날 다른 작업과 섞이지 않게 한다.
+        since = (run_start - timedelta(minutes=2)).strftime("%Y-%m-%d %H:%M")
+        try:
+            rows = await H.collect_filed_rows(page, since=since, log=log)
+            if rows:
+                n = roster.record_ht_rows(rows)
+                log(f"[i] (홈택스) 작업 대장에 {n}건 기록")
+                res.reason += f" (대장 {n}건)"
+        except Exception as e:  # noqa: BLE001 — 수집 실패해도 신고 성공엔 영향 없음
+            log(f"[!] (홈택스) 대장 수집 실패(신고는 완료됨): {str(e)[:60]}")
     return res

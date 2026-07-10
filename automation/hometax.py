@@ -983,6 +983,77 @@ async def query_inquiry(page, biz_no: str, log=print) -> bool:
     return True
 
 
+# 신고내역 그리드에서 업체 행 추출 — 셀 텍스트 패턴으로 컬럼 자동 인식
+_COLLECT_ROWS_JS = """() => {
+    const out = [];
+    for (const row of document.querySelectorAll('tr')) {
+        const cells = [...row.querySelectorAll('td')].map(td => (td.textContent || '').trim());
+        if (!cells.length) continue;
+        const bi = cells.findIndex(c => /^\\d{3}-\\d{2}-\\d{5}$/.test(c));
+        if (bi < 1) continue;
+        out.push({
+            name: cells[bi - 1],
+            bizno: cells[bi].replace(/-/g, ''),
+            at: cells.find(c => /^20\\d\\d-\\d\\d-\\d\\d[ T]?\\d{0,2}/.test(c)) || '',
+            taxym: cells.find(c => /^20\\d\\d년\\s*\\d{1,2}월$/.test(c)) || '',
+            receipt: cells.find(c => /^\\d{3}-20\\d\\d-\\d-\\d{3,}$/.test(c)) || '',
+        });
+    }
+    return out;
+}"""
+
+
+async def collect_filed_rows(page, since: str = "", log=print) -> list[dict]:
+    """신고내역 조회(당일)에서 '방금 신고한' 업체 행들을 수집.
+
+    홈택스 신고내역은 로그인 ID 본인 것만 나오므로(라이브 확인) 당일 조회 + 접수일시가
+    since(신고 시작 시각, 'YYYY-MM-DD HH:MM') 이후인 행만 취하면 이번 실행분으로 확정된다.
+    여러 페이지면 '다음'을 눌러가며 전부 읽는다. 반환: [{name,bizno,at,taxym,receipt}].
+    """
+    if not await navigate_to_inquiry(page, log):
+        return []
+    await click_button_text(page, "당일", log)
+    await page.wait_for_timeout(800)
+    if not await click_button_text(page, "조회", log):
+        try:
+            await page.get_by_role("button", name="조회").first.click(timeout=5000)
+        except Exception as e:
+            log(f"[!] (홈택스) 수집 조회 실패: {str(e)[:60]}")
+            return []
+    await page.wait_for_timeout(2500)
+    await _click_modal_confirm(page, must_contain="완료", log=log)
+    await page.wait_for_timeout(800)
+
+    collected: dict[str, dict] = {}
+    for _page_no in range(30):  # 최대 300건 안전장치
+        added = 0
+        for frame in page.frames:
+            try:
+                rows = await frame.evaluate(_COLLECT_ROWS_JS)
+            except Exception:
+                continue
+            for r in rows or []:
+                key = r.get("receipt") or (r.get("bizno", "") + r.get("at", ""))
+                if key and key not in collected:
+                    collected[key] = r
+                    added += 1
+            if rows:
+                break
+        # 다음 페이지로 — 새 행이 더 안 나오면 종료
+        if not await click_button_text(page, "다음", log):
+            break
+        await page.wait_for_timeout(1500)
+        if added == 0 and _page_no > 0:
+            break
+
+    rows = list(collected.values())
+    if since:
+        rows = [r for r in rows if (r.get("at") or "") >= since]
+    log(f"[i] (홈택스) 이번 신고분 수집: {len(rows)}건"
+        + (f" — {[r['name'] for r in rows[:8]]}{' …' if len(rows) > 8 else ''}" if rows else ""))
+    return rows
+
+
 async def open_receipt_docs(ctx, page, biz_no: str, log=print) -> bool:
     """사업자번호 조회 → 접수번호 링크 클릭(접수증/신고서/공개여부 창들 오픈)."""
     if not await query_inquiry(page, biz_no, log):

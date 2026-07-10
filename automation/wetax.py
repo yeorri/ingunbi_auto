@@ -140,12 +140,26 @@ async def _confirm_modals(page, log=print, rounds: int = 3) -> None:
             break
 
 
-async def convert_and_verify(page, log=print, timeout: int = 120) -> bool:
-    """[파일변환하기] 클릭 → JS 확인창('신고정보를 검증하시겠습니까?') 자동수락
-    → 서식검증 및 제출 화면(B070101M32) 도달 → '정상 신고 내역 N건' 확인.
+# M32 '정상 신고 내역' 표에서 (성명, 과세연월, 세액) 추출 — 주민번호는 마스킹이라 제외
+_M32_ROWS_JS = """() => {
+    const out = [];
+    for (const row of document.querySelectorAll('tr')) {
+        const cells = [...row.querySelectorAll('td')].map(td => (td.textContent || '').trim());
+        if (cells.length < 6) continue;
+        const ymi = cells.findIndex(c => /^20\\d\\d-\\d{2}$/.test(c));
+        if (ymi < 2) continue;   // [주민(법인)번호, 성명, 과세연월, ...] 구조 확인용
+        out.push({ name: cells[ymi - 1], taxym: cells[ymi],
+                   amount: (cells[cells.length - 1] || '').replace(/[^0-9]/g, '') });
+    }
+    return out;
+}"""
 
-    라이브 확인(2026-07-06): 별도 검증 대기 없이 페이지가 M32로 전환되며 정상 내역
-    표가 바로 표시됨. 서식 오류면 오류 표시 → False(해당 건 종료).
+
+async def convert_and_verify(page, log=print, timeout: int = 120) -> tuple[bool, list]:
+    """[파일변환하기] 클릭 → JS 확인창 자동수락 → M32 '정상 신고 내역 N건' 확인.
+
+    반환: (통과 여부, 정상 내역 행 목록 [{name, taxym, amount}]) — 행 목록은
+    '이 파일로 방금 신고한 업체 명단'으로 작업 대장에 기록된다(납부서 출력용).
     """
     if not await click_button_text(page, "파일변환하기", log):
         # 화살표 포함 표기(파일변환하기 →) 대비 폴백
@@ -153,26 +167,36 @@ async def convert_and_verify(page, log=print, timeout: int = 120) -> bool:
             await page.get_by_text("파일변환하기", exact=False).last.click(timeout=6000)
         except Exception as e:
             log(f"[!] (위택스) '파일변환하기' 클릭 실패: {str(e)[:60]}")
-            return False
+            return False, []
     log("[i] (위택스) 파일변환하기 — 검증 확인창 자동수락 후 결과 대기")
     for sec in range(0, timeout, 2):
         body = await _body(page)
         m = re.search(r"정상\s*신고\s*내역\s*(\d+)\s*건", body)
         if m:
             n = int(m.group(1))
-            if n >= 1:
-                log(f"[v] (위택스) 서식검증 통과 — 정상 신고 내역 {n}건")
-                return True
-            log("[!] (위택스) 정상 신고 내역 0건 — 제출 불가")
-            return False
+            if n < 1:
+                log("[!] (위택스) 정상 신고 내역 0건 — 제출 불가")
+                return False, []
+            rows: list = []
+            for frame in page.frames:
+                try:
+                    rows = await frame.evaluate(_M32_ROWS_JS)
+                except Exception:
+                    continue
+                if rows:
+                    break
+            log(f"[v] (위택스) 서식검증 통과 — 정상 신고 내역 {n}건"
+                + (f" ({[r['name'] for r in rows[:8]]}{' …' if len(rows) > 8 else ''})"
+                   if rows else ""))
+            return True, rows or []
         if "오류" in body and ("서식" in body or "오류 내역" in body or "신고 내역" in body):
             snippet = " ".join(body.split())
             idx = snippet.find("오류")
             log(f"[!] (위택스) 서식 오류: …{snippet[max(0, idx - 20):idx + 80]}…")
-            return False
+            return False, []
         await asyncio.sleep(2)
     log("[!] (위택스) 검증 결과 화면 미확인(시간초과)")
-    return False
+    return False, []
 
 
 async def submit_filing(page, log=print, timeout: int = 60) -> bool:
@@ -263,6 +287,115 @@ async def search_by_bizno(page, biz_no: str, log=print) -> int:
     n = int(m.group(1)) if m else -1
     log(f"[i] (위택스) 검색결과 {n}건")
     return n
+
+
+async def search_by_name(page, name: str, log=print) -> int:
+    """'상세검색' → 납세자명으로 검색. 반환: 결과 건수(-1 실패).
+
+    공용 인증서라 신고내역에 다른 직원 신고가 섞이므로, 대장에 기록된 납세자명으로
+    좁힌 뒤 신고일자까지 맞는 행만 출력한다.
+    """
+    try:
+        await page.get_by_text("상세검색", exact=True).first.click(timeout=6000)
+        await page.wait_for_timeout(1000)
+    except Exception as e:
+        log(f"[!] (위택스) 상세검색 열기 실패: {str(e)[:60]}")
+        return -1
+    filled = False
+    try:
+        loc = page.get_by_placeholder("납세자명 입력")
+        if await loc.count():
+            await loc.first.fill(name)
+            filled = True
+    except Exception:
+        pass
+    if not filled:
+        try:
+            loc = page.locator("input[placeholder*='납세자명']")
+            if await loc.count():
+                await loc.first.fill(name)
+                filled = True
+        except Exception:
+            pass
+    if not filled:
+        log("[!] (위택스) 납세자명 검색칸 못 찾음")
+        return -1
+    if not await click_button_text(page, "검색", log):
+        try:
+            await page.get_by_role("button", name="검색").first.click(timeout=5000)
+        except Exception as e:
+            log(f"[!] (위택스) 검색 클릭 실패: {str(e)[:60]}")
+            return -1
+    await page.wait_for_timeout(2500)
+    m = re.search(r"검색결과\s*(\d+)\s*건", await _body(page))
+    return int(m.group(1)) if m else -1
+
+
+async def _open_popover_for_row(page, name: str, filed_date: str, log=print) -> bool:
+    """납세자명 + 신고일자가 모두 일치하는 행의 발급출력 아이콘 클릭 → 팝오버."""
+    ok = False
+    for frame in page.frames:
+        try:
+            ok = bool(await frame.evaluate("""(arg) => {
+                const vis = e => { const r = e.getBoundingClientRect();
+                    return r.width > 1 && r.height > 1; };
+                for (const row of document.querySelectorAll('tr')) {
+                    const t = (row.innerText || '');
+                    if (!t.includes(arg.name)) continue;
+                    if (arg.date && !t.includes(arg.date)) continue;
+                    const els = [...row.querySelectorAll('a, button')].filter(vis);
+                    if (!els.length) continue;
+                    els[els.length - 1].click();
+                    return true;
+                }
+                return false;
+            }""", {"name": name, "date": filed_date}))
+            if ok:
+                break
+        except Exception:
+            continue
+    if not ok:
+        log(f"[!] (위택스) '{name}'({filed_date}) 행을 못 찾음")
+    else:
+        await page.wait_for_timeout(1000)
+    return ok
+
+
+async def print_napbu_for(ctx, page, pdf_dir, wt_name: str, filed_date: str,
+                          fname: str, output_mode: str = "pdf", log=print) -> str:
+    """대장 항목 1건의 위택스 납부서 출력. 반환: "done" | "none" | ""(실패).
+
+    신고내역 → 납세자명 검색 → (이름+신고일자) 행 팝오버 → [납부서] 없으면 0원/미생성.
+    """
+    from pathlib import Path
+    if not await open_inquiry(page, log):
+        return ""
+    n = await search_by_name(page, wt_name, log)
+    if n == 0:
+        log(f"[i] (위택스) '{wt_name}' 검색 결과 없음 — 건너뜀")
+        return "none"
+    if n < 0:
+        return ""
+    if not await _open_popover_for_row(page, wt_name, filed_date, log):
+        return ""
+    if not await button_visible(page, "납부서"):
+        log(f"[i] (위택스) '{wt_name}' 납부서 없음(0원/가상계좌 미생성) — 건너뜀")
+        return "none"
+    try:
+        async with ctx.expect_page(timeout=12000) as info:
+            if not await click_button_text(page, "납부서", log):
+                raise RuntimeError("납부서 버튼 클릭 실패")
+        oz = await info.value
+        await oz.wait_for_timeout(2500)
+        ok = await _oz_print(oz, Path(pdf_dir) / fname, log, save=(output_mode == "pdf"))
+        try:
+            await oz.close()
+        except Exception:
+            pass
+        return "done" if ok else ""
+    except Exception as e:
+        log(f"[!] (위택스) '{wt_name}' 납부서 실패: {str(e)[:70]}")
+        return ""
 
 
 async def _open_row_print_popover(page, log=print) -> bool:
