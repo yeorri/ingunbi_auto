@@ -110,6 +110,13 @@ def current_ym() -> str:
     return date.today().strftime("%Y-%m")
 
 
+def prev_ym() -> str:
+    d = date.today().replace(day=1)
+    d = d.replace(year=d.year - 1, month=12) if d.month == 1 \
+        else d.replace(month=d.month - 1)
+    return d.strftime("%Y-%m")
+
+
 def ledger_path(ym: str | None = None) -> Path:
     return app_data_dir() / f"ledger-{ym or current_ym()}.json"
 

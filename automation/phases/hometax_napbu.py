@@ -56,10 +56,23 @@ async def run(ctx, inp: Inputs, emit, stop_check=None) -> PhaseResult:
         return res
     await page.bring_to_front()
 
-    entries = roster.load_ledger()
-    pending = [(k, e) for k, e in entries.items()
-               if e.get("bizno") and e.get("ht", {}).get("filed_at")
-               and not e["ht"].get("napbu")]
+    # 이번 달 대장에서 미출력분 검색 — 없으면 지난달 대장도 확인
+    # (월말 신고 → 다음 달 초 출력하는 경우 대비)
+    ym = roster.current_ym()
+    entries = roster.load_ledger(ym)
+
+    def _pending(ent):
+        return [(k, e) for k, e in ent.items()
+                if e.get("bizno") and e.get("ht", {}).get("filed_at")
+                and not e["ht"].get("napbu")]
+
+    pending = _pending(entries)
+    if not pending:
+        ym = roster.prev_ym()
+        entries = roster.load_ledger(ym)
+        pending = _pending(entries)
+        if pending:
+            log(f"[i] (홈택스) 지난달({ym}) 대장의 미출력분 {len(pending)}건 발견")
 
     if not pending:
         # 폴백: 대장이 없으면 입력된 사업자번호 1건 (기존 단일 모드)
@@ -88,7 +101,7 @@ async def run(ctx, inp: Inputs, emit, stop_check=None) -> PhaseResult:
         if outcome:
             e["ht"]["napbu"] = outcome
             entries[key] = e
-            roster.save_ledger(entries)   # 건별 저장 — 중단돼도 진행 보존
+            roster.save_ledger(entries, ym)   # 건별 저장 — 중단돼도 진행 보존
             done += outcome == "done"
             skipped += outcome == "none"
         else:

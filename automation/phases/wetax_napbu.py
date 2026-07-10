@@ -54,9 +54,22 @@ async def run(ctx, inp: Inputs, emit, stop_check=None) -> PhaseResult:
         log(f"[!] {res.reason}")
         return res
 
-    entries = roster.load_ledger()
-    pending = [(k, e) for k, e in entries.items()
-               if e.get("wt", {}).get("filed_at") and not e["wt"].get("napbu")]
+    # 이번 달 대장에서 미출력분 검색 — 없으면 지난달 대장도 확인
+    # (월말 신고 → 다음 달 초 출력하는 경우 대비)
+    ym = roster.current_ym()
+    entries = roster.load_ledger(ym)
+
+    def _pending(ent):
+        return [(k, e) for k, e in ent.items()
+                if e.get("wt", {}).get("filed_at") and not e["wt"].get("napbu")]
+
+    pending = _pending(entries)
+    if not pending:
+        ym = roster.prev_ym()
+        entries = roster.load_ledger(ym)
+        pending = _pending(entries)
+        if pending:
+            log(f"[i] (위택스) 지난달({ym}) 대장의 미출력분 {len(pending)}건 발견")
 
     if not pending:
         res.ok = True
@@ -84,7 +97,7 @@ async def run(ctx, inp: Inputs, emit, stop_check=None) -> PhaseResult:
         if (wt.get("amount") or "") in ("", "0"):
             wt["napbu"] = "none"
             entries[key] = e
-            roster.save_ledger(entries)
+            roster.save_ledger(entries, ym)
             skipped += 1
             log(f"[i] (위택스) [{i}/{len(pending)}] {name} — 세액 0원, 건너뜀")
             continue
@@ -96,7 +109,7 @@ async def run(ctx, inp: Inputs, emit, stop_check=None) -> PhaseResult:
         if outcome:
             wt["napbu"] = outcome
             entries[key] = e
-            roster.save_ledger(entries)   # 건별 저장 — 중단돼도 진행 보존
+            roster.save_ledger(entries, ym)   # 건별 저장 — 중단돼도 진행 보존
             done += outcome == "done"
             skipped += outcome == "none"
         else:
